@@ -101,21 +101,24 @@ jobs:
           if find site -type f ! -name '*.bin' -size +200k | grep -q .; then echo "::error::Unexpected large file in site/"; exit 1; fi
           if grep -l -E 'CARV\.(index|loaded|stretches)\(' site/*.* | grep -v 'site/app.js' | grep -q .; then echo "::error::Unencrypted data in site/"; exit 1; fi
 
-      - name: Check Cloudflare key
+      # Put online: the site (functions/data) serves the newest "site-data" artifact. Encrypted files only;
+      # stored without compression so the site can read single files with range requests.
+      - name: Put online (encrypted data as artifact)
         if: env.changed == 'yes'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          echo "Key length: ${#CLOUDFLARE_API_TOKEN} characters"
-          curl -s https://api.cloudflare.com/client/v4/user/tokens/verify -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | python -c "import json,sys; d=json.load(sys.stdin); print('Cloudflare says:', d.get('success'), (d.get('result') or {}).get('status'), [e.get('message') for e in d.get('errors') or []])"
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-data
+          path: site/data/
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
 
-      - name: Put online (Cloudflare Pages)
+      - name: Remove older data artifacts
         if: env.changed == 'yes'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          WRANGLER_SEND_METRICS: "false"
-        run: npx --yes wrangler@3.99.0 pages deploy site --project-name "${{ vars.CF_PROJECT }}" --branch main --commit-dirty=true
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=site-data&per_page=100" --jq '.artifacts[] | select(.workflow_run.id != ${{ github.run_id }}) | .id' | while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" || true; done
 
       - name: Encrypt work state
         if: env.changed == 'yes'

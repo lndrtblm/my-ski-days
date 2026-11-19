@@ -1008,8 +1008,13 @@ const CARV = (() => {
   if (refreshBtn) refreshBtn.onclick = async () => {
     refreshBtn.classList.add("busy"); refreshBtn.disabled = true;
     if (window.CARV_SECURE && KEYB64) {
+      let cloudErr = null;
       try { await fetchFromCarv(); }
-      catch (e) {
+      catch (e) { cloudErr = e; }
+      // Cloud job not available (switched off or not set up): just load the newest data, no message.
+      if (cloudErr && cloudErr.message !== "carv" && cloudErr.message !== "timeout") cloudErr = null;
+      if (cloudErr) {
+        const e = cloudErr;
         refreshBtn.classList.remove("busy"); refreshBtn.disabled = false; setLabel("Refresh");
         alertBox(e.message === "carv"
           ? "Fetching from Carv failed. The Carv login has probably expired: on the laptop, log in to Carv again and run cloud\\carv-login-vernieuwen.ps1. The data you see is from the last successful update."
