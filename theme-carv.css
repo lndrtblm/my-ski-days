@@ -13,6 +13,17 @@ body { font-weight: 500; letter-spacing: 0.005em; -webkit-font-smoothing: antial
 /* Chart lines keep their real pixel width however much the chart is scaled (see crispCharts in app.js). */
 svg line, svg path, svg polyline, svg circle, svg rect { vector-effect: non-scaling-stroke; }
 svg text { font-family: var(--font); font-weight: 600; }
+/* Charts: clearer axes and zoom controls. */
+svg text.ax { fill: #4a5b72; font-size: 12px; }
+svg line.axis { stroke: #9aa9bb; stroke-width: 1.2; }
+.zc-svg { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.zc.zoomed .zc-svg { cursor: grab; }
+.zc-bar { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+.zc-bar button { min-width: 34px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff;
+  color: var(--ink); font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
+.zc-bar button:hover { border-color: var(--ink); }
+.zc-bar button[data-z="all"] { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.zc-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
 h1 { font-size: 40px; font-weight: 300; letter-spacing: -1.5px; margin: 14px 0 10px; }
 h2 { font-size: 20px; font-weight: 500; letter-spacing: -0.3px; }
 

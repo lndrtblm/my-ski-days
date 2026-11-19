@@ -201,42 +201,151 @@ const CARV = (() => {
   // ---------- charts (pure SVG) ----------
   // Chart drawing width: narrower on small screens, so charts stay tall enough to read there.
   const chartW = () => Math.round(Math.min(760, Math.max(380, (window.innerWidth || 760) - 40)));
-  function lineChart({ points, w = chartW(), h = 220, yLabel = "", color = "var(--accent)", dots = true, onClick, fmtX = (x) => x, fmtY = (y) => nf(y), area = false }) {
-    const pad = { l: 44, r: 10, t: 10, b: 24 };
-    const pts = points.filter((p) => p.y != null && !isNaN(p.y));
-    if (!pts.length) return `<p class="muted small">No data.</p>`;
-    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
-    let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-    if (x0 === x1) { x0 -= 1; x1 += 1; }
+  // Line charts with clear axes ("nice" round tick values, gridlines both ways, axis lines) and zoom:
+  // + / − / All buttons, pinch (phone), Ctrl+scroll or trackpad pinch (laptop), drag to move, double-tap = all.
+  // When zoomed in, the y-axis fits the visible part, so details become readable.
+  function lineChart({ points, w, h = 220, color = "var(--accent)", dots = true, onClick, fmtX = (x) => x, fmtY = (y) => nf(y), area = false }) {
+    return zoomChart({ series: [{ color, points, dots, area }], w, h, onClick, fmtX, fmtY, yZero: true });
+  }
+  const charts = new Map();
+  function niceStep(range, n) {
+    const raw = range / Math.max(1, n), p = 10 ** Math.floor(Math.log10(raw || 1)), f = raw / p;
+    return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p;
+  }
+  function zoomChart(cfg) {
+    const all = cfg.series.flatMap((s) => s.points.filter((p) => p.y != null && !isNaN(p.y)));
+    if (!all.length) return `<p class="muted small">No data.</p>`;
+    const xs = all.map((p) => p.x);
+    const full = [Math.min(...xs), Math.max(...xs)];
+    if (full[0] === full[1]) { full[0] -= 1; full[1] += 1; }
+    const id = "z" + Math.random().toString(36).slice(2);
+    const st = { id, cfg, full, view: [...full], flat: [] };
+    charts.set(id, st);
+    setTimeout(() => bindZoom(st));
+    const canZoom = new Set(xs).size > 12;
+    const touch = matchMedia("(pointer: coarse)").matches;
+    const legend = cfg.legend ? `<div class="legend">${cfg.series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>` : "";
+    return `<div class="zc" id="${id}">${canZoom ? `<div class="zc-bar"><button type="button" data-z="in" aria-label="Zoom in">+</button><button type="button" data-z="out" aria-label="Zoom out">−</button><button type="button" data-z="all">All</button><span class="zc-hint">${touch ? "Pinch to zoom · drag to move" : "Ctrl+scroll to zoom · drag to move"}</span></div>` : ""}<div class="zc-svg">${drawChart(st)}</div>${legend}</div>`;
+  }
+  function drawChart(st) {
+    const { cfg, view: [v0, v1] } = st;
+    const w = cfg.w || chartW(), h = cfg.h || 220;
+    const pad = { l: 50, r: 14, t: 12, b: 30 };
+    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    const span = v1 - v0;
+    // Visible points, plus one just outside each edge so lines run to the border.
+    const visible = (pts) => {
+      const ok = pts.filter((p) => p.y != null && !isNaN(p.y));
+      const i0 = Math.max(0, ok.findIndex((p) => p.x >= v0) - 1);
+      let i1 = ok.length - 1;
+      for (let i = ok.length - 1; i >= 0; i--) if (ok[i].x <= v1) { i1 = Math.min(ok.length - 1, i + 1); break; }
+      return ok.slice(i0, i1 + 1);
+    };
+    const vis = cfg.series.map((s) => visible(s.points));
+    const inView = vis.flat().filter((p) => p.x >= v0 && p.x <= v1);
+    const ys = (inView.length ? inView : vis.flat()).map((p) => p.y);
+    let y0 = Math.min(...ys), y1 = Math.max(...ys);
     if (y0 === y1) { y0 -= 1; y1 += 1; }
-    const yp = (y1 - y0) * 0.08; y0 = y0 >= 0 ? Math.max(0, y0 - yp) : y0 - yp; y1 += yp;
-    const X = (x) => pad.l + ((x - x0) / (x1 - x0)) * (w - pad.l - pad.r);
-    const Y = (y) => h - pad.b - ((y - y0) / (y1 - y0)) * (h - pad.t - pad.b);
+    const yStep = niceStep(y1 - y0, h < 200 ? 4 : 5);
+    y0 = Math.floor(y0 / yStep) * yStep; y1 = Math.ceil(y1 / yStep) * yStep;
+    if (cfg.yZero && y0 < 0 && Math.min(...ys) >= 0) y0 = 0;
+    const X = (x) => pad.l + ((x - v0) / span) * pw;
+    const Y = (y) => pad.t + ph - ((y - y0) / (y1 - y0)) * ph;
+    const dec = yStep < 1 ? (yStep < 0.1 ? 2 : 1) : 0;
+    const fy = (v) => cfg.fmtY(Number(v.toFixed(dec)));
     let g = "";
-    for (let i = 0; i <= 4; i++) {
-      const v = y0 + ((y1 - y0) * i) / 4, yy = Y(v);
-      g += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${yy}" y2="${yy}" stroke="var(--line)"/><text x="${pad.l - 6}" y="${yy + 4}" text-anchor="end">${fmtY(v)}</text>`;
+    for (let v = y0; v <= y1 + yStep / 2; v += yStep) {
+      const yy = Y(v).toFixed(1);
+      g += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${yy}" y2="${yy}" stroke="var(--line)"/><text class="ax" x="${pad.l - 7}" y="${+yy + 4}" text-anchor="end">${esc(fy(v))}</text>`;
     }
-    for (let i = 0; i <= 4; i++) {
-      const v = x0 + ((x1 - x0) * i) / 4;
-      g += `<text x="${X(v)}" y="${h - 6}" text-anchor="middle">${esc(fmtX(v))}</text>`;
+    const xStep = Math.max(1, Math.round(niceStep(span, Math.max(2, Math.floor(pw / 95)))));
+    const labels = [];
+    for (let v = Math.ceil(v0 / xStep) * xStep; v <= v1; v += xStep) labels.push(v);
+    const anyX = labels.some((v) => cfg.fmtX(v) !== "");
+    for (const v of labels) {
+      const xx = X(v).toFixed(1);
+      g += `<line x1="${xx}" x2="${xx}" y1="${pad.t}" y2="${pad.t + ph}" stroke="var(--line)" stroke-dasharray="2 3"/>`;
+      if (anyX) g += `<text class="ax" x="${xx}" y="${h - 9}" text-anchor="middle">${esc(cfg.fmtX(v))}</text>`;
     }
-    const d = pts.map((p, i) => `${i ? "L" : "M"}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join("");
+    g += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${pad.t + ph}" y2="${pad.t + ph}" class="axis"/><line x1="${pad.l}" x2="${pad.l}" y1="${pad.t}" y2="${pad.t + ph}" class="axis"/>`;
+    const clip = st.id + "c";
     let body = "";
-    if (area) body += `<path d="${d}L${X(pts[pts.length - 1].x)},${h - pad.b}L${X(pts[0].x)},${h - pad.b}Z" fill="${color}" opacity=".15"/>`;
-    body += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`;
-    if (dots) body += pts.map((p, i) => `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${pts.length > 120 ? 2.5 : 4}" fill="${color}" data-i="${i}" style="cursor:${onClick ? "pointer" : "default"}"/>`).join("");
-    const id = "c" + Math.random().toString(36).slice(2);
-    setTimeout(() => {
-      const el = document.getElementById(id); if (!el) return;
-      el.querySelectorAll("circle").forEach((c) => {
-        const p = pts[+c.dataset.i];
-        c.addEventListener("mousemove", (e) => showTip(e, p.tip || `${fmtX(p.x)}: ${fmtY(p.y)}`));
-        c.addEventListener("mouseleave", hideTip);
-        if (onClick) c.addEventListener("click", () => { hideTip(); onClick(p); });
+    st.flat = [];
+    const density = inView.length;
+    cfg.series.forEach((s, si) => {
+      const pts = vis[si];
+      if (!pts.length) return;
+      const d = pts.map((p, i) => `${i ? "L" : "M"}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join("");
+      if (s.area) body += `<path d="${d}L${X(pts[pts.length - 1].x).toFixed(1)},${pad.t + ph}L${X(pts[0].x).toFixed(1)},${pad.t + ph}Z" fill="${s.color}" opacity=".15"/>`;
+      body += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>`;
+      if (s.dots !== false && density < 450) {
+        const r = density < 60 ? 4 : density < 160 ? 3 : 2;
+        body += pts.filter((p) => p.x >= v0 && p.x <= v1).map((p) => { st.flat.push(p); return `<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${r}" fill="${s.color}" data-i="${st.flat.length - 1}"${cfg.onClick ? ' style="cursor:pointer"' : ""}/>`; }).join("");
+      }
+    });
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%"><defs><clipPath id="${clip}"><rect x="${pad.l}" y="${pad.t - 6}" width="${pw}" height="${ph + 12}"/></clipPath></defs>${g}<g clip-path="url(#${clip})">${body}</g></svg>`;
+  }
+  function bindZoom(st) {
+    const el = document.getElementById(st.id); if (!el) { charts.delete(st.id); return; }
+    const box = el.querySelector(".zc-svg");
+    const { cfg, full } = st;
+    const minSpan = Math.max(4, (full[1] - full[0]) / 300);
+    let moved = false;
+    const bindPoints = () => box.querySelectorAll("circle").forEach((c) => {
+      const p = st.flat[+c.dataset.i]; if (!p) return;
+      c.addEventListener("mousemove", (e) => showTip(e, p.tip || `${cfg.fmtX(p.x)}: ${cfg.fmtY(p.y)}`));
+      c.addEventListener("mouseleave", hideTip);
+      c.addEventListener("click", (e) => {
+        if (moved) return;
+        if (cfg.onClick) { hideTip(); cfg.onClick(p); } else showTip(e, p.tip || `${cfg.fmtX(p.x)}: ${cfg.fmtY(p.y)}`);
       });
     });
-    return `<svg id="${id}" viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="${esc(yLabel)}">${g}${body}</svg>`;
+    const redraw = () => { box.innerHTML = drawChart(st); bindPoints(); el.classList.toggle("zoomed", st.view[0] > full[0] || st.view[1] < full[1]); };
+    const setView = (a, b) => {
+      let span = Math.max(minSpan, Math.min(full[1] - full[0], b - a));
+      a = Math.max(full[0], Math.min(a, full[1] - span));
+      st.view = [a, a + span]; redraw();
+    };
+    const zoomAt = (factor, frac = 0.5) => {
+      const [a, b] = st.view, c = a + frac * (b - a), span = (b - a) * factor;
+      setView(c - frac * span, c - frac * span + span);
+    };
+    const plotFrac = (clientX) => {
+      const r = box.getBoundingClientRect(), w = cfg.w || chartW();
+      return Math.max(0, Math.min(1, ((clientX - r.left) / r.width * w - 50) / (w - 64)));
+    };
+    el.querySelectorAll("[data-z]").forEach((b) => (b.onclick = () => {
+      if (b.dataset.z === "in") zoomAt(0.5); else if (b.dataset.z === "out") zoomAt(2); else setView(full[0], full[1]);
+    }));
+    box.addEventListener("wheel", (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      zoomAt(e.deltaY > 0 ? 1.25 : 0.8, plotFrac(e.clientX));
+    }, { passive: false });
+    box.addEventListener("dblclick", () => setView(full[0], full[1]));
+    const ptrs = new Map();
+    let start = null;
+    box.addEventListener("pointerdown", (e) => {
+      ptrs.set(e.pointerId, e.clientX); moved = false;
+      start = { view: [...st.view], xs: [...ptrs.values()] };
+    });
+    box.addEventListener("pointermove", (e) => {
+      if (!ptrs.has(e.pointerId) || !start) return;
+      ptrs.set(e.pointerId, e.clientX);
+      const now = [...ptrs.values()], r = box.getBoundingClientRect();
+      const [a, b] = start.view, span = b - a;
+      if (now.length >= 2 && start.xs.length >= 2) {
+        const d0 = Math.abs(start.xs[1] - start.xs[0]) || 1, d1 = Math.abs(now[1] - now[0]) || 1;
+        const frac = plotFrac((start.xs[0] + start.xs[1]) / 2), c = a + frac * span, ns = span * d0 / d1;
+        setView(c - frac * ns, c - frac * ns + ns); moved = true;
+      } else if (now.length === 1 && start.xs.length === 1) {
+        const dx = now[0] - start.xs[0];
+        if (Math.abs(dx) > 6 && (a > full[0] || b < full[1])) { moved = true; const shift = -dx / r.width * span * 1.08; setView(a + shift, b + shift); }
+      }
+    });
+    const end = (e) => { ptrs.delete(e.pointerId); start = ptrs.size ? { view: [...st.view], xs: [...ptrs.values()] } : null; };
+    box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end); box.addEventListener("pointerleave", end);
+    bindPoints();
   }
 
   function bars(obj, labels, { max = 1, pct = true, sort = false } = {}) {
@@ -381,7 +490,7 @@ const CARV = (() => {
             return { x: i, y: v > 0 ? v : null, date: d.date, tip: `${dateFmt(d.date)} · ${esc(d.place)}<br>${name}: ${nf(v)}` };
           }),
         })),
-        fmtX: (x) => { const s = days[Math.round(x)]; return s ? s.date.slice(2) : ""; },
+        fmtX: (x) => { const s = days[Math.round(x)]; return s ? axisDate(s.date) : ""; },
         onClick: (p) => (location.hash = "#/d/" + p.date),
       })}
         <p class="muted small">Best Ski:IQ per day for carved turns and short turns, as in the Carv app. Days without that turn type have no point. Click a point to open that day.</p></div>
@@ -777,40 +886,11 @@ const CARV = (() => {
   }
 
   // Several lines in one chart: series = [{ name, color, points: [{x, y, tip}] }].
-  function multiLineChart({ series, w = chartW(), h = 240, fmtX = (x) => x, fmtY = (y) => nf(y), onClick }) {
-    const pad = { l: 44, r: 10, t: 10, b: 24 };
-    const all = series.flatMap((s) => s.points.filter((p) => p.y != null));
-    if (!all.length) return `<p class="muted small">No data.</p>`;
-    let x0 = Math.min(...all.map((p) => p.x)), x1 = Math.max(...all.map((p) => p.x));
-    let y0 = Math.min(...all.map((p) => p.y)), y1 = Math.max(...all.map((p) => p.y));
-    if (x0 === x1) { x0 -= 1; x1 += 1; }
-    if (y0 === y1) { y0 -= 1; y1 += 1; }
-    const yp = (y1 - y0) * 0.08; y0 -= yp; y1 += yp;
-    const X = (x) => pad.l + ((x - x0) / (x1 - x0)) * (w - pad.l - pad.r);
-    const Y = (y) => h - pad.b - ((y - y0) / (y1 - y0)) * (h - pad.t - pad.b);
-    let g = "";
-    for (let i = 0; i <= 4; i++) { const v = y0 + ((y1 - y0) * i) / 4, yy = Y(v); g += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${yy}" y2="${yy}" stroke="var(--line)"/><text x="${pad.l - 6}" y="${yy + 4}" text-anchor="end">${fmtY(v)}</text>`; }
-    for (let i = 0; i <= 4; i++) { const v = x0 + ((x1 - x0) * i) / 4; g += `<text x="${X(v)}" y="${h - 6}" text-anchor="middle">${esc(fmtX(v))}</text>`; }
-    const flat = [];
-    let body = "";
-    series.forEach((s, si) => {
-      const pts = s.points.filter((p) => p.y != null);
-      body += `<path d="${pts.map((p, i) => `${i ? "L" : "M"}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join("")}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>`;
-      body += pts.map((p) => { flat.push(p); return `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${pts.length > 120 ? 2.5 : 3.5}" fill="${s.color}" data-i="${flat.length - 1}" style="cursor:${onClick ? "pointer" : "default"}"/>`; }).join("");
-    });
-    const id = "c" + Math.random().toString(36).slice(2);
-    setTimeout(() => {
-      const el = document.getElementById(id); if (!el) return;
-      el.querySelectorAll("circle").forEach((c) => {
-        const p = flat[+c.dataset.i];
-        c.addEventListener("mousemove", (e) => showTip(e, p.tip || `${fmtX(p.x)}: ${fmtY(p.y)}`));
-        c.addEventListener("mouseleave", hideTip);
-        if (onClick) c.addEventListener("click", () => { hideTip(); onClick(p); });
-      });
-    });
-    return `<svg id="${id}" viewBox="0 0 ${w} ${h}" width="100%">${g}${body}</svg>
-      <div class="legend">${series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>`;
+  function multiLineChart({ series, w, h = 260, fmtX = (x) => x, fmtY = (y) => nf(y), onClick }) {
+    return zoomChart({ series, w, h, fmtX, fmtY, onClick, legend: true });
   }
+  // Short date for chart axes, e.g. "2 Jul 26".
+  const axisDate = (d) => d ? new Date(d.slice(0, 10) + "T12:00:00").toLocaleDateString(LOCALE, { day: "numeric", month: "short", year: "2-digit" }) : "";
 
   // ---------- outside vs inside ski edge angle (hover card on "Edge angle") ----------
   // Average the per-descent curves (weighted by turns). Positive = edged into the turn, in degrees.
@@ -932,7 +1012,7 @@ const CARV = (() => {
     $("#app").innerHTML = `<h1>Trends</h1>
       ${chips}
       <div class="card"><label>Metric: <select id="metric">${Object.entries(opts).map(([k, v]) => `<option value="${k}" ${k === m ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
-        <div style="margin-top:12px">${lineChart({ points: pts, h: 280, fmtX: (x) => { const s = list[Math.round(x)]; return s ? s.date.slice(2) : ""; }, fmtY: (y) => nf(y, Math.abs(y) < 10 ? 1 : 0), onClick: (p) => (location.hash = "#/s/" + p.id) })}</div>
+        <div style="margin-top:12px">${lineChart({ points: pts, h: 280, fmtX: (x) => { const s = list[Math.round(x)]; return s ? axisDate(s.date) : ""; }, fmtY: (y) => nf(y, Math.abs(y) < 10 && y % 1 ? 1 : 0), onClick: (p) => (location.hash = "#/s/" + p.id) })}</div>
         <p class="small">${vals.length} sessions${isIq && vals.length < allVals.length ? ` with ${MIN_AVG_IQ}+ (of ${allVals.length})` : ""} · average <b>${nf(mean(vals), 1)}</b> · first half ${nf(mean(vals.slice(0, half)), 1)} → second half <b>${nf(mean(vals.slice(half)), 1)}</b> · highest ${vals.length ? nf(Math.max(...vals), 1) : "–"}</p>
         <p class="muted small">Technique values averaged per session (weighted by number of turns), in the same units as on the session page.${m.startsWith("iq_") ? " Ski:IQ per turn type = best scored stretch of that type in the session (as in the Carv app)." : ""}${isIq ? ` Averages only count scores of ${MIN_AVG_IQ}+; lower scores are mostly teaching. The chart shows all sessions.` : ""}</p></div>`;
     $("#metric").onchange = (e) => { state.trend = e.target.value; viewTrends(); };
