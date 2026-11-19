@@ -1,0 +1,133 @@
+# My Ski Days in the cloud: fetch new Carv sessions, encrypt, put online (Cloudflare Pages).
+# Started by the Refresh button in the app (via functions/api/refresh.js) and a few times a day.
+# Nothing unencrypted is stored: the work state between runs is kept as an encrypted file in the Actions cache.
+name: update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5-21/2 * * *"   # every 2 hours from about 6:17 to 22:17 (Dutch winter time)
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARV_MCP_HOME: ${{ github.workspace }}/.carv-login
+      CARV_MCP_CACHE: ${{ github.workspace }}/.carv-cache
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install carv-mcp (fixed version)
+        run: pip install --quiet "git+https://github.com/DGTLMagician/carvMCP@f4b3d033f1eab0c71f5a9db5033ebbf54effdbc2"
+
+      - name: Restore encrypted work state
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: state.enc
+          key: state-${{ github.run_id }}
+          restore-keys: state-
+
+      - name: Decrypt work state
+        env:
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+        run: |
+          if [ -f state.enc ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass env:SITE_PASSWORD -in state.enc | tar xzf -
+            echo "Work state restored."
+          else
+            echo "No work state yet: all sessions are fetched (first run takes longer)."
+          fi
+          mkdir -p data "$CARV_MCP_CACHE"
+          sha256sum data/index.js 2>/dev/null | cut -d' ' -f1 > .before || true
+
+      - name: Carv login
+        env:
+          CARV_LOGIN: ${{ secrets.CARV_LOGIN }}
+        run: |
+          mkdir -p "$CARV_MCP_HOME"
+          umask 077
+          printf '%s' "$CARV_LOGIN" > "$CARV_MCP_HOME/carv.json"
+
+      - name: Fetch new sessions from Carv
+        run: |
+          if ! python -I export_carv.py --refresh 2>&1 | tee export.log; then
+            echo "::error title=Carv::Fetching from Carv failed. Is the Carv login expired? Log in again on the laptop and run cloud\\carv-login-vernieuwen.ps1."
+            exit 1
+          fi
+          if grep -q "UNAUTHENTICATED\|niet ingelogd\|verlopen" export.log; then
+            echo "::error title=Carv::Carv login expired. Log in again on the laptop and run cloud\\carv-login-vernieuwen.ps1."
+            exit 1
+          fi
+          rm -f "$CARV_MCP_HOME/carv.json"
+          after=$(sha256sum data/index.js | cut -d' ' -f1)
+          if [ -s .before ] && [ "$(cat .before)" = "$after" ]; then
+            echo "changed=no" >> "$GITHUB_ENV"; echo "No new sessions."
+          else
+            echo "changed=yes" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: env.changed == 'yes'
+        with:
+          node-version: "22"
+
+      - name: Build and encrypt the site
+        if: env.changed == 'yes'
+        env:
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          SITE_SALT: ${{ vars.SITE_SALT }}
+        run: |
+          python -I publiceer_bouw.py > build.log
+          head -n 1 build.log
+          printf '%s' "$SITE_SALT" > salt.txt
+          printf '%s' "$SITE_PASSWORD" | node versleutel.mjs publish/data site/data salt.txt
+          rm -f salt.txt
+          # Safety check: nothing unencrypted may go online.
+          if find site -type f ! -name '*.bin' -size +200k | grep -q .; then echo "::error::Unexpected large file in site/"; exit 1; fi
+          if grep -l -E 'CARV\.(index|loaded|stretches)\(' site/*.* | grep -v 'site/app.js' | grep -q .; then echo "::error::Unencrypted data in site/"; exit 1; fi
+
+      - name: Put online (Cloudflare Pages)
+        if: env.changed == 'yes'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
+        run: npx --yes wrangler@3.99.0 pages deploy site --project-name "${{ vars.CF_PROJECT }}" --branch main --commit-dirty=true
+
+      - name: Encrypt work state
+        if: env.changed == 'yes'
+        env:
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+        run: |
+          rm -f state.enc
+          tar czf - data .carv-cache/index.json | openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass env:SITE_PASSWORD -out state.enc
+          ls -la state.enc
+
+      - name: Save encrypted work state
+        if: env.changed == 'yes'
+        uses: actions/cache/save@v4
+        with:
+          path: state.enc
+          key: state-${{ github.run_id }}
+
+      - name: Remove older work states
+        if: env.changed == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --key state- --json key --jq '.[].key' | grep -v "^state-${{ github.run_id }}$" | while read -r k; do gh cache delete "$k" --repo "$GITHUB_REPOSITORY" || true; done

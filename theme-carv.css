@@ -1,0 +1,75 @@
+/* Preview: a light look in the spirit of getcarv.com (white, navy text, black pill buttons,
+   light geometric type, wide letter spacing). Loaded after app.css; only overrides. */
+:root {
+  --bg: #f4f6f9; --card: #ffffff; --ink: #121f38; --muted: #7d8fa3; --line: #e3e8ee;
+  --accent: #2bb0ed; --accent-soft: #e3f4fc; --on-accent: #ffffff;
+  --good: #12a37f; --good-bg: rgba(0,204,163,.12); --best: #0e8f6f;
+  --warn: #d98a00; --warn-bg: rgba(240,170,30,.14); --bad: #e5383b;
+  --lift: #9aa9bb; --radius: 18px;
+  --font: "Urbanist", "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+body { font-weight: 500; letter-spacing: 0.005em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+/* Chart lines keep their real pixel width however much the chart is scaled (see crispCharts in app.js). */
+svg line, svg path, svg polyline, svg circle, svg rect { vector-effect: non-scaling-stroke; }
+svg text { font-family: var(--font); font-weight: 600; }
+h1 { font-size: 40px; font-weight: 300; letter-spacing: -1.5px; margin: 14px 0 10px; }
+h2 { font-size: 20px; font-weight: 500; letter-spacing: -0.3px; }
+
+/* Header: white bar, spaced wordmark left, uppercase tabs right; black pill marks the active tab. */
+.top { background: rgba(255,255,255,.92); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  max-width: none; border-bottom: 1px solid var(--line); flex-direction: row; align-items: center; justify-content: space-between;
+  padding-left: max(24px, calc((100% - 1176px) / 2)); padding-right: max(24px, calc((100% - 1176px) / 2)); }
+.brand { font-weight: 400; font-size: 20px; letter-spacing: 0.32em; text-transform: uppercase; }
+.brand img { display: none; }
+nav { display: flex; gap: 6px; background: none; border: 0; padding: 0; }
+nav a { color: var(--ink); font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  border-radius: 999px; padding: 0 18px; min-height: 40px; }
+nav a:hover { color: var(--accent); }
+nav a.on { background: #000; color: #fff; }
+main { padding-top: 10px; }
+
+/* Refresh button: right of the tabs on wide screens, top right next to the name on a phone. */
+.refresh { order: 3; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 16px; margin-left: 6px;
+  border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink); cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.refresh:hover { border-color: var(--ink); }
+.refresh svg { vector-effect: none; }
+.refresh.busy svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.top nav { order: 2; margin-left: auto; }
+.refresh:disabled { cursor: progress; }
+.refresh-msg { border-left: 4px solid var(--warn); }
+
+/* Cards: white, soft shadow instead of borders, big rounded corners. */
+.card, .stat { border: 0; box-shadow: 0 1px 2px rgba(18,31,56,.04), 0 6px 24px rgba(18,31,56,.06); }
+.card { padding: 22px; }
+.stat { padding: 14px 16px; }
+.stat b { font-weight: 300; font-size: 30px; letter-spacing: -1px; }
+.stats9 .stat b { font-size: 28px; }
+.stat span { text-transform: uppercase; letter-spacing: 0.08em; font-size: 10.5px; font-weight: 700; }
+
+/* Chips as pills: outlined, active one solid black. */
+.chip { background: #fff; border: 1px solid var(--line); color: var(--ink); font-weight: 600; padding: 7px 16px; }
+.chip.on { background: #000; border-color: #000; color: #fff; }
+.lock button { background: #000; color: #fff; border-radius: 999px; }
+.lock input { background: #fff; border-radius: 999px; padding: 0 18px; }
+
+table th { text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; color: var(--muted); }
+tr.click:hover td { background: var(--accent-soft); }
+.rec-table th { letter-spacing: 0.02em; font-size: 10px; padding-left: 6px; padding-right: 6px; }
+
+@media (min-width: 1150px) { .stats9 .stat b { font-size: 26px; } }
+@media (max-width: 760px) {
+  .top { flex-direction: column; align-items: stretch; padding-left: 12px; padding-right: 12px; }
+  .top nav { margin-left: 0; }
+  .refresh { position: absolute; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 6px); min-height: 36px; padding: 0 12px; margin: 0; }
+  .brand { font-size: 17px; }
+  nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: #eef1f5; border-radius: 999px; padding: 4px; }
+  nav a { padding: 0 4px; font-size: 10.5px; letter-spacing: 0.06em; min-height: 36px; }
+  h1 { font-size: 30px; }
+}
+@media (max-width: 480px) {
+  .stats9 .stat b { font-size: 22px; }
+  .stat span { font-size: 9.5px; letter-spacing: 0.05em; }
+}

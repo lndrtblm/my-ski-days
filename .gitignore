@@ -1,0 +1,8 @@
+data/
+publish/
+site/
+state.enc
+salt.txt
+.carv-login/
+.carv-cache/
+export.log
