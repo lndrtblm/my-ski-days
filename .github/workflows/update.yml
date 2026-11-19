@@ -101,6 +101,14 @@ jobs:
           if find site -type f ! -name '*.bin' -size +200k | grep -q .; then echo "::error::Unexpected large file in site/"; exit 1; fi
           if grep -l -E 'CARV\.(index|loaded|stretches)\(' site/*.* | grep -v 'site/app.js' | grep -q .; then echo "::error::Unencrypted data in site/"; exit 1; fi
 
+      - name: Check Cloudflare key
+        if: env.changed == 'yes'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          echo "Key length: ${#CLOUDFLARE_API_TOKEN} characters"
+          curl -s https://api.cloudflare.com/client/v4/user/tokens/verify -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | python -c "import json,sys; d=json.load(sys.stdin); print('Cloudflare says:', d.get('success'), (d.get('result') or {}).get('status'), [e.get('message') for e in d.get('errors') or []])"
+
       - name: Put online (Cloudflare Pages)
         if: env.changed == 'yes'
         env:
