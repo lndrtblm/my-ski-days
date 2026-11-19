@@ -13,6 +13,13 @@ body { font-weight: 500; letter-spacing: 0.005em; -webkit-font-smoothing: antial
 /* Chart lines keep their real pixel width however much the chart is scaled (see crispCharts in app.js). */
 svg line, svg path, svg polyline, svg circle, svg rect { vector-effect: non-scaling-stroke; }
 svg text { font-family: var(--font); font-weight: 600; }
+/* Average turn (S-shape) hover card. */
+.shape-wrap { display: flex; gap: 18px; align-items: flex-start; }
+.shape-svg { flex: 0 0 auto; max-width: 46%; height: auto; }
+.shape-side { flex: 1; min-width: 0; }
+.shape-legend i { display: block; height: 10px; border-radius: 6px; }
+.shape-ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 3px; }
+.hov-shape { cursor: help; }
 /* Charts: clearer axes and zoom controls. */
 svg text.ax { fill: #4a5b72; font-size: 12px; }
 svg line.axis { stroke: #9aa9bb; stroke-width: 1.2; }

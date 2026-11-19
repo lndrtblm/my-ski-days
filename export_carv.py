@@ -20,7 +20,7 @@ from carv_mcp import store
 
 OUT = Path(__file__).resolve().parent / "data"
 SDIR = OUT / "s"
-EXPORT_VERSION = 11
+EXPORT_VERSION = 12
 
 
 def r(x, n=2):
@@ -58,6 +58,41 @@ def edging_curves(tech: dict, step: int = 1) -> dict:
     out = {"lo": curve("left_turn_right_ski"), "li": curve("left_turn_left_ski"),
            "ro": curve("right_turn_left_ski"), "ri": curve("right_turn_right_ski")}
     return {k: v for k, v in out.items() if v}
+
+
+def shape_curves(tech: dict, step: int = 2) -> dict:
+    """The average turn as the Carv app draws it: the median ski path (an S of two turns: first half is a
+    right turn, second half a left turn) plus, per turn and per position in the turn (start -> end):
+      par = angle between the skis (deg, mean of both skis' yaw_diff), acc = load on the skis (mean of both),
+      rot = turning speed of the skis (change of the mid-ski heading per 1% of the turn, deg)."""
+    p = tech.get("ski_path_median") or {}
+    x, y = p.get("x") or [], p.get("y") or []
+    if len(x) < 20 or len(x) != len(y):
+        return {}
+    out = {"path": [[round(x[i], 2), round(y[i], 1)] for i in range(0, len(x), step)]}
+
+    def side(name: str):
+        ls, rs = tech.get(f"{name}_turn_left_ski") or {}, tech.get(f"{name}_turn_right_ski") or {}
+        mid = tech.get(f"{name}_turn_median_mid_ski") or {}
+        acc_l, acc_r = ls.get("acc") or [], rs.get("acc") or []
+        n = min(len(acc_l), len(acc_r))
+        if n < 10:
+            return None
+        res = {"acc": [round((acc_l[i] + acc_r[i]) / 2, 3) for i in range(0, n, step)]}
+        yl, yr = ls.get("yaw_diff") or [], rs.get("yaw_diff") or []
+        if len(yl) >= n and len(yr) >= n:
+            res["par"] = [round((yl[i] + yr[i]) / 2, 2) for i in range(0, n, step)]
+        yaw = mid.get("yaw") or []
+        if len(yaw) >= n:
+            rate = [abs(yaw[min(i + 1, n - 1)] - yaw[max(i - 1, 0)]) / (2 if 0 < i < n - 1 else 1) for i in range(n)]
+            res["rot"] = [round(rate[i], 2) for i in range(0, n, step)]
+        return res
+
+    for key, name in (("L", "left"), ("R", "right")):
+        v = side(name)
+        if v:
+            out[key] = v
+    return out
 
 
 def app_runs(s: dict) -> list[dict]:
@@ -194,6 +229,7 @@ def export_session(sid: str) -> dict:
             "radius_m": r(m.get("turn_radius") or additional.get("turn_radius"), 1),
             "balance": r(additional.get("mid_turn_balance"), 3),
             "edging": edging_curves(m.get("technique") or {}),
+            "shape": shape_curves(m.get("technique") or {}),
             "display": store.rnd(display, 3),
             "additional": store.rnd(additional, 3),
             "path": path_points(run.get("path"), True),

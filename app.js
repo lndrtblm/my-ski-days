@@ -574,7 +574,8 @@ const CARV = (() => {
         const v = disp?.[k];
         const weight = imp[k] != null && impSum ? nf((imp[k] / impSum) * 100) + "%" : "–";
         const hov = k === "edge_angle" && !!edgingHtml;
-        return `<div class="bar bar4${hov ? " hov-edge" : ""}"><span>${esc(label)}${hov ? ` <span class="hov-hint">ⓘ</span>` : ""}</span>
+        const hovS = !hov && SHAPE_METRICS[k] && scopeRuns.some((r) => r.shape?.path?.length);
+        return `<div class="bar bar4${hov ? " hov-edge" : ""}${hovS ? " hov-shape" : ""}"${hovS ? ` data-metric="${k}"` : ""}><span>${esc(label)}${hov || hovS ? ` <span class="hov-hint">ⓘ</span>` : ""}</span>
           ${v != null ? `<div class="track"><div class="fill" style="width:${metricFrac(k, v) * 100}%"></div></div>` : "<span></span>"}
           <span class="v">${metricText(k, v)}</span><span class="v pts">${weight}</span></div>`;
       }).join("");
@@ -663,6 +664,12 @@ const CARV = (() => {
     document.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => { location.hash = url(b.dataset.go || null); }));
     document.querySelectorAll(".hov-edge").forEach((el) => {
       el.addEventListener("mouseenter", (e) => showHoverCard(e, edgingHtml));
+      el.addEventListener("mousemove", (e) => moveHoverCard(e));
+      el.addEventListener("mouseleave", hideHoverCard);
+    });
+    const shapeScope = run ? `descent ${run.num}` : runK != null ? `run ${runK + 1}` : "this day";
+    document.querySelectorAll(".hov-shape").forEach((el) => {
+      el.addEventListener("mouseenter", (e) => showHoverCard(e, shapeCard(scopeRuns, el.dataset.metric, shapeScope) || `<div class="muted small">No turn-shape data here.</div>`));
       el.addEventListener("mousemove", (e) => moveHoverCard(e));
       el.addEventListener("mouseleave", hideHoverCard);
     });
@@ -846,7 +853,8 @@ const CARV = (() => {
       const cell = (k, s) => {
         // Edge angle cells show the outside/inside ski card for that descent on hover.
         // data-label: the metric name, shown inside the cell when the table stacks into cards on a phone.
-        const td = (cls, style, inner) => `<td class="num rec-cell${cls}${k === "edge_angle" ? " hov-edge" : ""}" data-label="${esc(METRICS[k] || k)}"${k === "edge_angle" ? ` data-edate="${s[0]}" data-edesc="${s[6]}"` : ""}${style ? ` style="${style}"` : ""}>${inner}</td>`;
+        const hk = k === "edge_angle" ? " hov-edge" : SHAPE_METRICS[k] ? " hov-shape" : "";
+        const td = (cls, style, inner) => `<td class="num rec-cell${cls}${hk}" data-label="${esc(METRICS[k] || k)}"${hk ? ` data-edate="${s[0]}" data-edesc="${s[6]}" data-metric="${k}"` : ""}${style ? ` style="${style}"` : ""}>${inner}</td>`;
         const n = shown(k, s[5]?.[k]);
         if (n == null) return td("", "", "–");
         const v = metricText(k, s[5][k]);
@@ -860,7 +868,7 @@ const CARV = (() => {
       };
       const shortDate = (d) => new Date(d + "T12:00:00").toLocaleDateString(LOCALE, { day: "numeric", month: "short", year: "2-digit" });
       return `<div class="card"><h2>${IQ_TYPES[T]} — top ${top.length} descents</h2><table class="rec-table">
-        <thead><tr><th>#</th><th class="num">Ski:IQ</th><th>Date · descent</th>${keys.map((k) => `<th class="num">${esc(METRICS[k] || k)}${k === "edge_angle" ? ` <span class="hov-hint">ⓘ</span>` : ""}</th>`).join("")}</tr></thead>
+        <thead><tr><th>#</th><th class="num">Ski:IQ</th><th>Date · descent</th>${keys.map((k) => `<th class="num">${esc(METRICS[k] || k)}${k === "edge_angle" || SHAPE_METRICS[k] ? ` <span class="hov-hint">ⓘ</span>` : ""}</th>`).join("")}</tr></thead>
         <tbody>${top.map((s, i) => `<tr class="click" data-go="#/d/${s[0]}/${s[6] - 1}">
           <td class="rec-rank">${i + 1}</td><td class="num rec-iq" data-label="#${i + 1} · Ski:IQ"><b>${nf(s[2])}</b></td><td class="rec-when" data-label="Date · descent">${shortDate(s[0])} · ${s[6]}<br><span class="muted small">${(s[3] || "").slice(11, 16)}</span></td>
           ${keys.map((k) => cell(k, s)).join("")}</tr>`).join("")}</tbody>
@@ -871,14 +879,16 @@ const CARV = (() => {
       ${section("carving")}${section("short")}`;
     document.querySelectorAll("tr[data-go]").forEach((r) => (r.onclick = () => (location.hash = r.dataset.go)));
     // Hover on an edge angle cell: load that day (cached after the first time) and show the descent's card.
-    document.querySelectorAll("td.hov-edge").forEach((el) => {
+    document.querySelectorAll("td.hov-edge, td.hov-shape").forEach((el) => {
       let over = false;
       el.addEventListener("mouseenter", async (e) => {
         over = true;
         showHoverCard(e, `<div class="muted small">Loading…</div>`);
         const D = await loadDay(el.dataset.edate).catch(() => null);
         const r = D?.runs.find((x) => x.num === +el.dataset.edesc);
-        if (over) showHoverCard(e, edgingCard(r ? [r] : [], `${dateFmt(el.dataset.edate)}, descent ${el.dataset.edesc}`) || `<div class="muted small">No per-ski data for this descent.</div>`);
+        const scope = `${dateFmt(el.dataset.edate)}, descent ${el.dataset.edesc}`;
+        const html = el.classList.contains("hov-edge") ? edgingCard(r ? [r] : [], scope) : shapeCard(r ? [r] : [], el.dataset.metric, scope);
+        if (over) showHoverCard(e, html || `<div class="muted small">No per-ski data for this descent.</div>`);
       });
       el.addEventListener("mousemove", moveHoverCard);
       el.addEventListener("mouseleave", () => { over = false; hideHoverCard(); });
@@ -891,6 +901,89 @@ const CARV = (() => {
   }
   // Short date for chart axes, e.g. "2 Jul 26".
   const axisDate = (d) => d ? new Date(d.slice(0, 10) + "T12:00:00").toLocaleDateString(LOCALE, { day: "numeric", month: "short", year: "2-digit" }) : "";
+
+  // ---------- the average turn as an S (hover card on other technique metrics) ----------
+  // Carv's median ski path: first half = right turn, second half = left turn. Along the path the colour
+  // shows where in the turn a metric is measured more (darker) or less (lighter).
+  const SHAPE_METRICS = {
+    parallel_skis: { what: "Angle between the skis", more: "skis less parallel", src: "par", unit: "°" },
+    g_force: { what: "Load on the skis", more: "more load", src: "acc", unit: " g" },
+    weight_release: { what: "Unloading of the skis", more: "more weight released", src: "rel" },
+    rotation_rate: { what: "Turning speed of the skis", more: "faster turning", src: "rot" },
+    turn_shape_25_short_carving: { what: "How sharply the path curves", more: "sharper curve", src: "curve" },
+    turn_closure: { what: "How sharply the path curves", more: "sharper curve (closing the turn)", src: "curve" },
+    early_edging: { what: "How fast the edge angle builds up", more: "edging up faster", src: "edgeup" },
+    edging_smoothness: { what: "Sudden changes in edging", more: "less smooth edging", src: "jerk" },
+    edging_similarity: { what: "Edge angle difference between the skis", more: "skis edged more differently", src: "simdiff", unit: "°" },
+  };
+  function shapeCard(runs, k, scopeText) {
+    const meta = SHAPE_METRICS[k];
+    const rs = runs.filter((r) => r.shape?.path?.length);
+    if (!meta || !rs.length) return "";
+    const wt = (r) => r.turns || 1, W = rs.reduce((a, r) => a + wt(r), 0);
+    const n = rs[0].shape.path.length;
+    const path = Array.from({ length: n }, (_, i) => [0, 1].map((j) => rs.reduce((a, r) => a + (r.shape.path[i]?.[j] ?? 0) * wt(r), 0) / W));
+    // Average a per-turn curve over the descents that have it.
+    const avgCurve = (get) => {
+      const got = rs.map((r) => [get(r), wt(r)]).filter(([c]) => c?.length);
+      if (!got.length) return null;
+      const m = Math.min(...got.map(([c]) => c.length)), w = got.reduce((a, [, x]) => a + x, 0);
+      return Array.from({ length: m }, (_, i) => got.reduce((a, [c, x]) => a + c[i] * x, 0) / w);
+    };
+    const resample = (c, m) => c && Array.from({ length: m }, (_, i) => c[Math.round((i * (c.length - 1)) / Math.max(1, m - 1))]);
+    const half = Math.floor(n / 2);
+    const curveOf = (side) => {
+      const S = side === "R" ? "R" : "L", e1 = side === "R" ? "ro" : "lo", e2 = side === "R" ? "ri" : "li";
+      const roll = () => { const a = avgCurve((r) => r.edging?.[e1]), b = avgCurve((r) => r.edging?.[e2]); return a && b ? a.map((v, i) => (v + b[i]) / 2) : null; };
+      switch (meta.src) {
+        case "par": case "acc": case "rot": return avgCurve((r) => r.shape[S]?.[meta.src]);
+        case "rel": { const a = avgCurve((r) => r.shape[S]?.acc); if (!a) return null; const mx = Math.max(...a); return a.map((v) => mx - v); }
+        case "simdiff": { const a = avgCurve((r) => r.edging?.[e1]), b = avgCurve((r) => r.edging?.[e2]); return a && b ? a.map((v, i) => Math.abs(v - b[i])) : null; }
+        case "edgeup": { const a = roll(); return a && a.map((v, i) => Math.max(0, (a[Math.min(i + 1, a.length - 1)] - a[Math.max(i - 1, 0)]) / 2)); }
+        case "jerk": { const a = roll(); return a && a.map((v, i) => Math.abs((a[Math.min(i + 1, a.length - 1)] ?? v) - 2 * v + (a[Math.max(i - 1, 0)] ?? v))); }
+        case "curve": {
+          const seg = side === "R" ? path.slice(0, half + 1) : path.slice(half);
+          const hd = seg.slice(1).map((p, i) => Math.atan2(p[0] - seg[i][0], p[1] - seg[i][1]));
+          return seg.map((_, i) => { const a = hd[Math.max(0, i - 1)], b = hd[Math.min(hd.length - 1, i)]; let d = Math.abs(b - a); if (d > Math.PI) d = 2 * Math.PI - d; return (d * 180) / Math.PI; });
+        }
+      }
+      return null;
+    };
+    const cR = resample(curveOf("R"), half + 1), cL = resample(curveOf("L"), n - half);
+    if (!cR && !cL) return "";
+    const vals = [...(cR || []), ...(cL || [])];
+    const lo = Math.min(...vals), hi = Math.max(...vals), norm = (v) => (hi > lo ? (v - lo) / (hi - lo) : 0.5);
+    // Light to dark blue.
+    const col = (t) => { const a = [214, 236, 250], b = [8, 70, 125]; return `rgb(${a.map((x, i) => Math.round(x + (b[i] - x) * t)).join(",")})`; };
+    const xs = path.map((p) => p[0]), ys = path.map((p) => p[1]);
+    const W2 = 250, H2 = 330, pad = 26;
+    const sx = (W2 - 2 * pad) / Math.max(1e-6, Math.max(...xs) - Math.min(...xs)), sy = (H2 - 2 * pad) / Math.max(1e-6, Math.max(...ys) - Math.min(...ys));
+    // Widened sideways (like the Carv app), otherwise the S is a thin line.
+    const sX = Math.min(sx * 0.62, sy * 4), cx = W2 / 2 - ((Math.max(...xs) + Math.min(...xs)) / 2) * sX, y0 = Math.min(...ys);
+    const P = (p) => [cx + p[0] * sX, pad + (p[1] - y0) * sy];
+    let segs = "";
+    for (let i = 0; i < n - 1; i++) {
+      const v = i < half ? cR?.[i] : cL?.[i - half];
+      const [x1, y1] = P(path[i]), [x2, y2] = P(path[i + 1]);
+      segs += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${v == null ? "#c9d3df" : col(norm(v))}" stroke-width="9" stroke-linecap="round"/>`;
+    }
+    const apex = (a, b) => { let best = a; for (let i = a; i < b; i++) if (Math.abs(path[i][0]) > Math.abs(path[best][0])) best = i; return best; };
+    const aR = apex(0, half), aL = apex(half, n);
+    const lab = (i, text) => { const [x, y] = P(path[i]); const right = path[i][0] > 0; return `<text x="${(x + (right ? -16 : 16)).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="${right ? "end" : "start"}" style="fill:var(--ink);font-size:12px;font-weight:700">${text}</text>`; };
+    const [tx, ty] = P(path[0]);
+    // Where in each turn the metric peaks (as % of the turn).
+    const peak = (c) => { if (!c) return null; let b = 0; c.forEach((v, i) => { if (v > c[b]) b = i; }); return Math.round((b / Math.max(1, c.length - 1)) * 100); };
+    const pR = peak(cR), pL = peak(cL);
+    const fmtV = (v) => (meta.unit ? nf(v, meta.unit === " g" ? 2 : 1) + meta.unit : "");
+    const ends = meta.unit ? `<span>${fmtV(lo)}</span><span>${fmtV(hi)}</span>` : `<span>less</span><span>more</span>`;
+    return `<div class="hc-title">${esc(METRICS[k] || k)} through the turn <span class="muted small">(${esc(scopeText)})</span></div>
+      <div class="shape-wrap"><svg viewBox="0 0 ${W2} ${H2}" width="${W2}" class="shape-svg" role="img" aria-label="Average turn shape">
+        <text x="${tx.toFixed(1)}" y="12" text-anchor="middle" class="ax">start ↓ downhill</text>${segs}${lab(aR, "Right turn")}${lab(aL, "Left turn")}</svg>
+      <div class="shape-side"><p class="small" style="margin:0 0 8px"><b>${esc(meta.what)}</b> along your average turn: darker = ${esc(meta.more)}.</p>
+        <div class="shape-legend"><i style="background:linear-gradient(90deg,${col(0)},${col(1)})"></i><div class="shape-ends">${ends}</div></div>
+        <p class="small" style="margin:10px 0 0">Highest at about ${pR != null ? `<b>${pR}%</b> of the right turn` : "–"}${pL != null ? ` and <b>${pL}%</b> of the left turn` : ""} (0% = start, 100% = end of the turn).</p>
+        <p class="muted small" style="margin:8px 0 0">Shape and values are Carv's average over the turns${rs.length > 1 ? `, weighted by turns over ${rs.length} descents` : ""}. Lighter and darker are relative within this picture.</p></div></div>`;
+  }
 
   // ---------- outside vs inside ski edge angle (hover card on "Edge angle") ----------
   // Average the per-descent curves (weighted by turns). Positive = edged into the turn, in degrees.
