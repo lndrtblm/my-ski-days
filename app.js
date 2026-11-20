@@ -34,6 +34,13 @@ const CARV = (() => {
     short: ["parallel_skis", "turn_shape_25_short_carving", "rotation_rate", "early_edging", "edging_similarity",
       "edge_angle", "weight_release", "g_force", "slope_pitch", "snow_difficulty"],
   };
+  // Groups as on the Carv app's descent page (Intensity / Control / Line). Rotation rate and snow
+  // surface (short turns) were not on the screenshots; placed where they fit best.
+  const TECH_GROUPS = [
+    { name: "Intensity", sub: "How hard you ski", keys: ["edge_angle", "g_force", "early_edging", "edge_build", "rotation_rate"] },
+    { name: "Control", sub: "How consistently you ski", keys: ["edging_similarity", "parallel_skis", "turn_shape_25_short_carving", "edging_smoothness", "weight_release"] },
+    { name: "Line", sub: "The terrain you ski", keys: ["slope_pitch", "turn_closure", "snow_difficulty"] },
+  ];
   const RAW_METRICS = { tempo: ["Tempo", ""], turn_speed: ["Turn Speed", " m/s"] };
   // Units per metric. Carv stores angles in radians, G-force in g, speeds in m/s and most
   // other metrics as a 0–1 score. conv = to display unit, max = full bar.
@@ -348,13 +355,58 @@ const CARV = (() => {
     bindPoints();
   }
 
-  function bars(obj, labels, { max = 1, pct = true, sort = false } = {}) {
+  // Carv-app style bar: a row of segments. The "performance zone" (your usual range) is coloured
+  // purple → teal; a tall marker shows this value (dark inside the zone, grey-blue outside it).
+  // Without a zone and with fill: true the segments up to the value are coloured (a plain amount).
+  const ZONE_RGB = [[111, 107, 168], [138, 134, 196], [165, 166, 232], [127, 182, 234], [92, 195, 232], [47, 208, 200]];
+  const zoneColor = (t) => {
+    t = Math.max(0, Math.min(1, t)) * (ZONE_RGB.length - 1);
+    const i = Math.min(ZONE_RGB.length - 2, Math.floor(t)), f = t - i, a = ZONE_RGB[i], b = ZONE_RGB[i + 1];
+    return `rgb(${a.map((x, j) => Math.round(x + (b[j] - x) * f)).join(",")})`;
+  };
+  function segBar(frac, { zone = null, fill = false, n = 40, title = "" } = {}) {
+    const clamp = (x) => Math.max(0, Math.min(n - 1, Math.round(Math.max(0, Math.min(1, x)) * (n - 1))));
+    const pos = frac == null || isNaN(frac) ? null : clamp(frac);
+    const [zl, zh] = zone ? [clamp(zone[0]), Math.max(clamp(zone[0]), clamp(zone[1]))] : [null, null];
+    const inZone = zone && pos != null && pos >= zl && pos <= zh;
+    let s = "";
+    for (let i = 0; i < n; i++) {
+      let col = "";
+      if (zone && i >= zl && i <= zh) col = zoneColor(zh === zl ? 1 : (i - zl) / (zh - zl));
+      else if (fill && pos != null && i <= pos) col = zoneColor(pos ? i / pos : 1);
+      const d = fill || pos == null ? 99 : Math.abs(i - pos);
+      const cls = d === 0 ? "m" : d === 1 ? "n1" : d === 2 ? "n2" : "";
+      s += `<i${cls ? ` class="${cls}"` : ""}${col && d ? ` style="background:${col}"` : ""}></i>`;
+    }
+    return `<div class="seg${zone ? (inZone ? " in" : " out") : ""}"${title ? ` title="${esc(title)}"` : ""}>${s}</div>`;
+  }
+  // Bar scale per metric, read off the Carv app (61° edge angle sits at about two thirds of the bar).
+  const SEG_SCALE = { edge_angle: [0, 90], g_force: [0.5, 3], slope_pitch: [0, 40], rotation_rate: [0, 150] };
+  const segFracOf = (k, x) => { const [lo, hi] = SEG_SCALE[k] || [0, 100]; return x == null ? null : (x - lo) / (hi - lo); };
+  // Performance zone: the middle 80% (10th–90th percentile) of your last 40 ski days up to this date,
+  // only days with a Ski:IQ of MIN_AVG_IQ+ (lower days are mostly teaching). get(s) returns the
+  // value in display units. Returns [low, high] in those units, or null with fewer than 5 days.
+  const zoneCache = {};
+  function zoneOf(key, upTo, get) {
+    const ck = key + "|" + upTo;
+    if (ck in zoneCache) return zoneCache[ck];
+    const topIq = (s) => Math.max(-1, ...Object.values(s.best_iq || {}).map((x) => x?.iq ?? -1));
+    const vals = INDEX.sessions.filter((s) => s.date && s.date <= upTo && topIq(s) >= MIN_AVG_IQ).slice(-40)
+      .map(get).filter((v) => v != null && !isNaN(v)).sort((a, b) => a - b);
+    const q = (p) => vals[Math.min(vals.length - 1, Math.max(0, Math.round(p * (vals.length - 1))))];
+    return (zoneCache[ck] = vals.length >= 5 ? [q(0.1), q(0.9)] : null);
+  }
+  const ZONE_INFO = `Coloured segments = your performance zone: the middle 80% of your last 40 ski days (days with a Ski:IQ of ${MIN_AVG_IQ}+). Dark marker = inside your zone, grey-blue = outside it.`;
+  const zoneLegend = () => `<p class="zone-legend"><span class="zl">${[0, 0.2, 0.4, 0.6, 0.8, 1].map((t) => `<i style="background:${zoneColor(t)}"></i>`).join("")}</span> Your performance zone <span class="hov-hint" title="${esc(ZONE_INFO)}">ⓘ</span></p>`;
+
+  function bars(obj, labels, { max = 1, pct = true, sort = false, zones = null } = {}) {
     let keys = Object.keys(labels).filter((k) => obj && obj[k] != null);
     if (sort) keys.sort((a, b) => obj[b] - obj[a]);
     if (!keys.length) return `<p class="muted small">No data.</p>`;
     return keys.map((k) => {
-      const v = obj[k], w = Math.max(0, Math.min(1, v / max)) * 100;
-      return `<div class="bar"><span>${esc(labels[k])}</span><div class="track"><div class="fill" style="width:${w}%"></div></div><span class="v">${pct ? nf(v * 100) + "%" : nf(v)}</span></div>`;
+      const v = obj[k], z = zones && zones[k];
+      const bar = z ? segBar(v / max, { zone: [z[0] / max, z[1] / max], title: `Your zone ${nf(z[0])}–${nf(z[1])}` }) : segBar(v / max, { fill: true });
+      return `<div class="tm-row"><div class="tm-top"><span class="tm-name">${esc(labels[k])}</span><span class="tm-val">${pct ? nf(v * 100) + "%" : nf(v)}</span></div>${bar}</div>`;
     }).join("");
   }
 
@@ -561,23 +613,39 @@ const CARV = (() => {
     const impSum = Object.values(imp).reduce((a, b) => a + b, 0);
     const appList = APP_ORDER[bt];
     const extraImp = appList ? Object.keys(imp).filter((k) => !appList.includes(k) && imp[k]) : [];
+    // Technique as in the Carv app: metrics grouped in Intensity / Control / Line, each with a segment
+    // bar showing this value against your performance zone. Right of each group: its share of the
+    // Ski:IQ points in the best stretch of the chosen turn type.
     const techRows = () => {
       let keys;
-      if (appList) keys = appList;
+      if (appList) keys = [...appList, ...(disp?.edge_build != null && !appList.includes("edge_build") ? ["edge_build"] : [])];
       else {
         keys = [...new Set([...Object.keys(METRICS).filter((k) => disp && disp[k] != null), ...Object.keys(imp)])]
           .filter((k) => METRICS[k] || IMPACT_ONLY[k] || RAW_METRICS[k]);
         keys.sort((a, b) => (imp[b] ?? -99) - (imp[a] ?? -99));
       }
-      return keys.map((k) => {
+      const row = (k) => {
         const label = METRICS[k] || IMPACT_ONLY[k] || RAW_METRICS[k][0];
-        const v = disp?.[k];
-        const weight = imp[k] != null && impSum ? nf((imp[k] / impSum) * 100) + "%" : "–";
+        const v = disp?.[k], x = metricNum(k, v);
+        const weight = imp[k] != null && impSum ? `${nf((imp[k] / impSum) * 100)}% of Ski:IQ` : "";
         const hov = k === "edge_angle" && !!edgingHtml;
         const hovS = !hov && SHAPE_METRICS[k] && scopeRuns.some((r) => r.shape?.path?.length);
-        return `<div class="bar bar4${hov ? " hov-edge" : ""}${hovS ? " hov-shape" : ""}"${hovS ? ` data-metric="${k}"` : ""}><span>${esc(label)}${hov || hovS ? ` <span class="hov-hint">ⓘ</span>` : ""}</span>
-          ${v != null ? `<div class="track"><div class="fill" style="width:${metricFrac(k, v) * 100}%"></div></div>` : "<span></span>"}
-          <span class="v">${metricText(k, v)}</span><span class="v pts">${weight}</span></div>`;
+        const z = (METRICS[k] || RAW_METRICS[k]) ? zoneOf(k, date, (s) => metricNum(k, s.display?.[k])) : null;
+        const bar = x == null ? "" : segBar(segFracOf(k, x), { zone: z && [segFracOf(k, z[0]), segFracOf(k, z[1])],
+          title: z ? `Your zone ${unitOf(k).fmt(z[0])} – ${unitOf(k).fmt(z[1])}` : "" });
+        return `<div class="tm-row${hov ? " hov-edge" : ""}${hovS ? " hov-shape" : ""}"${hovS ? ` data-metric="${k}"` : ""}>
+          <div class="tm-top"><span class="tm-name">${esc(label)}${hov || hovS ? ` <span class="hov-hint">ⓘ</span>` : ""}</span>
+          <span class="tm-val">${weight ? `<small>${weight}</small>` : ""}${metricText(k, v)}</span></div>${bar}</div>`;
+      };
+      const used = new Set();
+      const groups = TECH_GROUPS.map((g) => ({ ...g, keys: g.keys.filter((k) => keys.includes(k) && !used.has(k) && used.add(k)) }));
+      const rest = keys.filter((k) => !used.has(k));
+      if (rest.length) groups.push({ name: "Other", sub: "Also part of this Ski:IQ", keys: rest });
+      return groups.filter((g) => g.keys.length).map((g) => {
+        const share = impSum ? g.keys.reduce((a, k) => a + (imp[k] || 0), 0) / impSum : null;
+        return `<div class="tm-group"><div class="tm-head"><div><h3>${esc(g.name)}</h3><p>${esc(g.sub)}</p></div>
+          ${share != null ? `<div class="tm-score"><b>${nf(share * 100)}%</b><span>of Ski:IQ</span></div>` : ""}</div>
+          ${g.keys.map(row).join("")}</div>`;
       }).join("");
     };
 
@@ -683,25 +751,22 @@ const CARV = (() => {
       ${descentsCard()}
       <div class="grid g2">
         <div class="card"><h2>Route</h2>${mapSvg(mapRuns, mapSel)}</div>
-        <div class="card"><h2>Ski:IQ by turn type ${scopeLabel}</h2>${bars(iqBy, iqLabels, { max: 160, pct: false, sort: true })}
+        <div class="card"><h2>Ski:IQ by turn type ${scopeLabel}</h2>${bars(iqBy, iqLabels, { max: 160, pct: false, sort: true, zones: Object.fromEntries(skiedIq.map((k) => [k, zoneOf("iq_" + k, date, (s) => s.best_iq?.[k]?.iq ?? null)])) })}
           <p class="muted small">Best Ski:IQ per turn type, as in the Carv app: Carv scores stretches of about 8 turns of one type.${notSkied.length ? ` Not skied: ${notSkied.map((k) => IQ_TYPES[k]).join(", ")}.` : ""}</p>
           <h2 style="margin-top:18px">Turn types</h2>${bars(Object.fromEntries(Object.entries(types || {}).map(([k2, v]) => [k2, v / typeTotal])), Object.fromEntries(Object.keys(types || {}).map((k2) => [k2, tt(k2)])), { sort: true })}</div>
       </div>
       <div class="card"><h2>Altitude and speed ${scopeLabel}</h2>
         ${lineChart({ points: altPts, h: 180, dots: false, area: true, fmtX: () => "", fmtY: (y) => nf(y) + " m" })}
         ${lineChart({ points: spdPts, h: 150, dots: false, color: "var(--warn)", fmtX: () => "", fmtY: (y) => nf(y) + " km/h" })}</div>
-      <div class="grid g2">
         <div class="card"><h2>Technique ${scopeLabel}</h2>
           ${bt ? `<div class="chips" style="margin:0 0 8px">${byIq.map((k) => `<button class="chip ${k === bt ? "on" : ""}" data-iqtype="${k}">${IQ_TYPES[k]} ${nf(best[k].iq)}</button>`).join("")}</div>` : ""}
-          <div class="bar bar4 head"><span>Metric</span><span></span><span class="v">Your score</span><span class="v">Weight</span></div>
-          ${techRows()}
+          <div class="tm-grid">${techRows()}</div>${zoneLegend()}
           ${extraImp.length ? `<p class="muted small">Also counted in this Ski:IQ but not listed in the app: ${extraImp.map((k) => `${esc(METRICS[k] || IMPACT_ONLY[k] || k)} ${nf((imp[k] / impSum) * 100)}%`).join(", ")}.</p>` : ""}
-          <p class="muted small">"Your score" is your average ${scopeLabel.replace(/[()]/g, "")} (angles in degrees, G-force in g). "Weight" is each metric's share of the Ski:IQ points in the best stretch of the chosen turn type (together 100%).</p></div>
+          <p class="muted small">Values are your average ${scopeLabel.replace(/[()]/g, "")}. "% of Ski:IQ" is the metric's (or group's) share of the Ski:IQ points in the best stretch of the chosen turn type. ${esc(ZONE_INFO)}</p></div>
         <div class="card"><h2>Turn IQ per turn ${scopeLabel}</h2>
           ${lineChart({ points: turnPts, h: 200, dots: turnPts.length < 400, fmtX: (x) => nf(x), fmtY: (y) => nf(y) })}
           <p class="small">Left average <b>${nf(avg(leftIq, 0))}</b> (${leftIq.length} turns) · right average <b>${nf(avg(rightIq, 0))}</b> (${rightIq.length} turns)</p>
           <p class="muted small">Averages only count descents with a Ski:IQ of ${MIN_AVG_IQ}+ (${avgRuns.length} of ${scopeRuns.length} descents); lower ones are mostly teaching.</p></div>
-      </div>
       <div class="card"><h2>Descents and lifts ${runK != null && !run ? `(run ${runK + 1})` : ""}</h2><div class="scroll"><table>
         <thead><tr><th>#</th><th>Run</th><th>Start</th><th>Piste</th><th class="num">Duration</th><th class="num">Distance</th><th class="num">↓ m</th><th class="num">Max km/h</th><th class="num">Turns</th><th class="num">Tempo</th><th class="num">Corridor</th><th class="num">Radius</th><th>Balance</th><th class="num">Best Ski:IQ</th><th class="num" title="${esc(BEST8_INFO)}">Best 8</th></tr></thead>
         <tbody>${timeline({ runs: D.runs.filter((r) => runK == null || run || r.session === runK), lifts: runK != null && !run ? D.datas[runK].lifts : D.lifts }).map((x) => x.kind === "run" ? `<tr class="click ${x.r === run ? "sel" : ""}" data-go="${x.r.num - 1}">

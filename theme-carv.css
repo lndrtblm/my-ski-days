@@ -25,6 +25,30 @@ svg text { font-family: var(--font); font-weight: 600; }
   .desc-table td.rec-when { grid-column: 1 / -1; text-align: left; font-size: 14px; }
   .desc-table td.rec-when::before { text-align: left; }
 }
+/* Carv-app style segment bars (segBar in app.js) and the Intensity / Control / Line groups. */
+.seg { display: flex; align-items: center; gap: 2px; height: 30px; margin: 4px 0 2px; }
+.seg i { flex: 1 1 0; min-width: 2px; height: 13px; border-radius: 3px; background: #e2e7ee; }
+.seg i.n2 { height: 16px; }
+.seg i.n1 { height: 20px; }
+.seg i.m { flex: 0 0 7px; height: 30px; border-radius: 4px; background: #121f38; box-shadow: 0 0 0 4px rgba(18,31,56,.05), 0 2px 8px rgba(18,31,56,.25); }
+.seg.out i.m { background: #5d7896; box-shadow: 0 0 0 4px rgba(93,120,150,.08); }
+.tm-row { padding: 8px 0 6px; }
+.tm-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.tm-name { font-size: 15px; font-weight: 600; color: #3a4b63; }
+.tm-val { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tm-val small { font-size: 11px; font-weight: 600; color: var(--muted); margin-right: 10px; letter-spacing: 0; }
+.tm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+.tm-group { background: #f8fafc; border-radius: 22px; padding: 16px 18px 8px; }
+.tm-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 4px; }
+.tm-head h3 { margin: 0; font-size: 20px; font-weight: 700; }
+.tm-head p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.tm-score { text-align: right; }
+.tm-score b { display: block; font-size: 28px; font-weight: 600; letter-spacing: -0.5px; line-height: 1.1; }
+.tm-score span { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tm-row.hov-edge, .tm-row.hov-shape { cursor: help; }
+.zone-legend { display: flex; align-items: center; justify-content: center; gap: 8px; color: #4a5b72; font-size: 13px; margin: 6px 0 10px; }
+.zone-legend .zl { display: inline-flex; gap: 2px; }
+.zone-legend .zl i { width: 7px; height: 13px; border-radius: 2px; }
 /* Average turn (S-shape) hover card. */
 .shape-wrap { display: flex; gap: 18px; align-items: flex-start; }
 .shape-svg { flex: 0 0 auto; max-width: 46%; height: auto; }
