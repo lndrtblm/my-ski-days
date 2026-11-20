@@ -667,6 +667,7 @@ const CARV = (() => {
       <div class="chips">${D.runs.filter((r) => runK == null || r.session === runK).map((r) => `<button class="chip ${r === run ? "on" : ""}" data-go="${r.num - 1}">${r.num} · ${(r.start || "").slice(11, 16)}</button>`).join("")}</div>
       ${run ? `<div class="card" style="border-color:var(--accent)"><h2>Descent ${run.num} <span class="muted small">run ${run.session + 1}</span>${run.route ? " – " + esc(run.route) : ""}${run.piste_difficulty ? ` <span class="pill">${esc(run.piste_difficulty)}</span>` : ""}</h2>
         <div class="stats" style="margin-bottom:6px">
+          ${(() => { const b = descBest(run); return `<div class="stat"><b>${b ? nf(b.iq) : "–"}</b><span>Ski:IQ${b && dTypes.length > 1 ? " · " + esc(IQ_TYPES[b.type] || b.type).toLowerCase() : ""}</span></div>`; })()}
           <div class="stat"><b>${nf(best8(run.turn_rows), 1)}</b><span>best 8 turns</span></div>
           <div class="stat"><b>${nf(run.tempo)}</b><span>tempo (turns/min)</span></div>
           <div class="stat"><b>${nf(run.corridor_m, 1)} m</b><span>corridor</span></div>
