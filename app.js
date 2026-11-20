@@ -591,6 +591,60 @@ const CARV = (() => {
     const mapSel = run ? mapRuns.runs.indexOf(run) : null;
     const url = (x) => `#/d/${date}${x === undefined || x === null ? "" : "/" + x}`;
 
+    // All descents of the day (or run) with every metric the Carv app shows per descent, compared like
+    // on the Records page: ★ = best of these descents, amber = lowest, greener = closer to the best.
+    const descRuns = D.runs.filter((r) => runK == null || r.session === runK);
+    const descBest = (r) => {
+      const b = bestOfSubs((D.subsegments || []).filter((y) => y[2] && r.start && r.end && y[2] >= r.start && y[2] <= r.end));
+      const top = Object.entries(b).sort((p, q) => q[1].iq - p[1].iq)[0];
+      return top ? { iq: top[1].iq, type: top[0] } : null;
+    };
+    const dTypes = ["carving", "short"].filter((t) => descRuns.some((r) => APP_ORDER[t].some((k) => r.display?.[k] != null)));
+    const dType = dTypes.includes(state.descType) ? state.descType : dTypes.includes(bt) ? bt : dTypes[0];
+    const descentsCard = () => {
+      if (!dType || !descRuns.length) return "";
+      const keys = APP_ORDER[dType].filter((k) => descRuns.some((r) => r.display?.[k] != null));
+      const shown = (k, v) => (v == null ? null : parseFloat(metricText(k, v).replace(/,/g, "")));
+      const rows = descRuns.map((r) => ({ r, best: descBest(r), b8: best8(r.turn_rows) }));
+      // Column values used for comparison: Ski:IQ, Best 8 and the technique metrics (higher = better).
+      const val = (row, c) => c === "iq" ? row.best?.iq ?? null : c === "b8" ? (row.b8 == null ? null : Math.round(row.b8 * 10) / 10) : shown(c, row.r.display?.[c]);
+      const cols = ["iq", "b8", ...keys];
+      const mx = {}, mn = {};
+      for (const c of cols) { const vs = rows.map((x) => val(x, c)).filter((v) => v != null); mx[c] = vs.length ? Math.max(...vs) : null; mn[c] = vs.length ? Math.min(...vs) : null; }
+      const cell = (row, c, text, label, attrs = "") => {
+        const n = val(row, c);
+        const td = (cls, style, inner) => `<td class="num rec-cell${cls}" data-label="${esc(label)}"${attrs}${style ? ` style="${style}"` : ""}>${inner}</td>`;
+        if (n == null) return td("", "", "–");
+        if (mx[c] === mn[c] || rows.length < 2) return td("", "", text);
+        const t = (n - mn[c]) / (mx[c] - mn[c]);
+        const bar = `<div class="rec-bar"><i style="width:${(6 + t * 94).toFixed(0)}%"></i></div>`;
+        if (n === mx[c]) return td(" rec-top", "", `<span class="rec-best">★ ${text}</span><div class="rec-gap">best</div>${bar}`);
+        const gapNum = mx[c] - n;
+        const gap = `<div class="rec-gap">−${c === "iq" ? nf(gapNum) : c === "b8" ? nf(gapNum, 1) : unitOf(c).fmt(gapNum)}</div>`;
+        if (n === mn[c]) return td(" rec-low", "", `${text}${gap}${bar}`);
+        return td("", `background:rgba(60,207,110,${(0.05 + t * 0.25).toFixed(2)})`, `${text}${gap}${bar}`);
+      };
+      const hint = (k) => (k === "edge_angle" || SHAPE_METRICS[k] ? ` <span class="hov-hint">ⓘ</span>` : "");
+      return `<div class="card"><h2>Descents — all metrics ${runK != null && !run ? `(run ${runK + 1})` : ""}</h2>
+        ${dTypes.length > 1 ? `<div class="chips" style="margin:0 0 8px">${dTypes.map((t) => `<button class="chip ${t === dType ? "on" : ""}" data-desctype="${t}">${IQ_TYPES[t]} metrics</button>`).join("")}</div>` : ""}
+        <table class="rec-table desc-table"><thead><tr><th>#</th><th class="num">Ski:IQ</th><th class="num">Best 8</th><th class="num">Tempo</th><th class="num">Radius</th><th class="num">Corridor</th><th>Balance</th>
+          ${keys.map((k) => `<th class="num">${esc(METRICS[k] || k)}${hint(k)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((row) => {
+          const r = row.r, hov = (k) => (k === "edge_angle" ? " hov-edge-d" : SHAPE_METRICS[k] ? " hov-shape-d" : "");
+          return `<tr class="click${r === run ? " sel" : ""}" data-go="${r.num - 1}">
+            <td class="rec-when" data-label="Descent"><b>${r.num}</b> · ${(r.start || "").slice(11, 16)}${r.route ? `<br><span class="muted small">${esc(r.route)}</span>` : ""}</td>
+            ${cell(row, "iq", row.best ? `${nf(row.best.iq)}` : "–", "Ski:IQ")}
+            ${cell(row, "b8", nf(row.b8, 1), "Best 8")}
+            <td class="num rec-cell" data-label="Tempo">${nf(r.tempo)}<div class="rec-gap">/min</div></td>
+            <td class="num rec-cell" data-label="Radius">${nf(r.radius_m, 1)} m</td>
+            <td class="num rec-cell" data-label="Corridor">${nf(r.corridor_m, 1)} m</td>
+            <td class="rec-cell" data-label="Balance">${balancePill(r.balance)}</td>
+            ${keys.map((k) => { const v = r.display?.[k]; const cls = hov(k); return cell(row, k, v == null ? "–" : metricText(k, v), METRICS[k] || k, cls ? ` data-hov="${cls.trim()}" data-num="${r.num}" data-metric="${k}"` : ""); }).join("")}
+          </tr>`;
+        }).join("")}</tbody></table>
+        <p class="muted small">Per descent the values the Carv app shows for that descent (${IQ_TYPES[dType].toLowerCase()} metrics). Ski:IQ = best scored stretch in the descent. ★ = best of these descents, <span class="rec-legend-low">amber</span> = lowest, greener = closer to the best; under each value the gap to the best. ⓘ = hover for the turn picture. Click a row to open that descent.</p></div>`;
+    };
+
     $("#app").innerHTML = `
       <p class="small"><a href="#/">← Overview</a>${prev ? ` · <a href="${"#/d/" + prev}">← previous day</a>` : ""}${next ? ` · <a href="${"#/d/" + next}">next day →</a>` : ""}</p>
       <h1>${dateFmt(date)} · ${esc(sm.place)}</h1>
@@ -625,6 +679,7 @@ const CARV = (() => {
           ${run.max_speed_kmh ? `<div class="stat"><b>${nf(run.max_speed_kmh)}</b><span>max km/h</span></div>` : ""}
         </div>
         <p class="small"><a href="${url("r" + run.session)}">← run ${run.session + 1}</a> · <a href="${url()}">whole day</a></p></div>` : ""}
+      ${descentsCard()}
       <div class="grid g2">
         <div class="card"><h2>Route</h2>${mapSvg(mapRuns, mapSel)}</div>
         <div class="card"><h2>Ski:IQ by turn type ${scopeLabel}</h2>${bars(iqBy, iqLabels, { max: 160, pct: false, sort: true })}
@@ -664,6 +719,15 @@ const CARV = (() => {
     document.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => { location.hash = url(b.dataset.go || null); }));
     document.querySelectorAll(".hov-edge").forEach((el) => {
       el.addEventListener("mouseenter", (e) => showHoverCard(e, edgingHtml));
+      el.addEventListener("mousemove", (e) => moveHoverCard(e));
+      el.addEventListener("mouseleave", hideHoverCard);
+    });
+    document.querySelectorAll("[data-desctype]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); state.descType = b.dataset.desctype; const y = window.scrollY; viewDay(date, scopeArg).then(() => window.scrollTo(0, y)); }));
+    // Hover in the descents table: edge angle card or turn picture of that one descent.
+    document.querySelectorAll("td[data-hov]").forEach((el) => {
+      const r = D.runs.find((x) => x.num === +el.dataset.num);
+      const html = () => (el.dataset.hov === "hov-edge-d" ? edgingCard(r ? [r] : [], `descent ${el.dataset.num}`) : shapeCard(r ? [r] : [], el.dataset.metric, `descent ${el.dataset.num}`)) || `<div class="muted small">No per-turn data for this descent.</div>`;
+      el.addEventListener("mouseenter", (e) => showHoverCard(e, html()));
       el.addEventListener("mousemove", (e) => moveHoverCard(e));
       el.addEventListener("mouseleave", hideHoverCard);
     });
